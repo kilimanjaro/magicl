@@ -152,6 +152,20 @@
              (magicl:@ m (magicl:transpose m))
              5e-5))))))
 
+
+(deftest test-qr-lisp-special-cases ()
+  "Test that the pure Lisp implementation of QR factorization works as advertised."
+  (dolist (mat (list
+		(magicl:eye 3)
+		(magicl:ones '(3 3))
+		(magicl:ones '(3 1))
+		(magicl:from-list '(#C(1d0 0d0) #C(0d0 1d0) #C(1d0 1d0) #C(0d0 0d0)) '(2 2))))
+    (multiple-value-bind (Q R) (magicl::qr-lisp mat)
+      (is (magicl:= (magicl:@ (magicl:dagger Q) Q)
+		    (magicl:eye (magicl:ncols Q) :type (magicl:element-type Q))))
+      (is (magicl:= R (magicl:upper-triangular R)))
+      (is (magicl:= mat (magicl:@ Q R))))))
+
 ;;; Block Matrix Routines
 
 (deftest test-block-diagonal ()
@@ -194,3 +208,4 @@
                              2d0 0d0 0d0 0d0 0d0
                              0d0 2d0 0d0 0d0 0d0)
                            '(5 5))))))
+

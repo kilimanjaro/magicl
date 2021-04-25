@@ -559,10 +559,52 @@ If :SQUARE is T, then the result will be restricted to the lower leftmost square
 (define-backend-function svd (matrix &key reduced)
   "Find the SVD of a matrix M. Return (VALUES U SIGMA Vt) where M = U*SIGMA*Vt")
 
-(define-backend-function qr (matrix)
-  "Finds the QR factorization of MATRIX. Returns two matrices (Q, R).
+(define-extensible-function (qr qr-lisp) (matrix)
+  (:documentation "Finds the QR factorization of MATRIX. Returns two matrices (Q, R).
 
 NOTE: If MATRIX is not square, this will compute the reduced QR factorization.")
+  (:method ((matrix matrix))
+    (let ((m (nrows matrix))
+	  (n (ncols matrix))
+	  (vs nil)
+	  (R (deep-copy-tensor matrix)))
+      (flet ((norm (m)
+	       (let ((result 0))
+		 (dotimes (i (nrows m))
+		   (dotimes (j (ncols m))
+		     (let ((v (tref m i j)))
+		       (incf result (* v (conjugate v))))))
+		 (sqrt result)))
+	     (reflect! (A v k j)
+	       (let ((v-dot-A
+		       (loop :for i :from k :below m
+			     :for iv :from 0
+			     :sum (* (conjugate (tref v iv 0)) (tref A i j)))))
+		 (loop :for i :from k :below m
+		       :for iv :from 0
+		       :do (decf (tref A i j)
+				 (* 2 (tref v iv 0) v-dot-A))))))
+	;; compute R and vs
+	(loop :for k :below n
+	      :for v := (slice R (list k k) (list m (1+ k)))
+	      :for norm-v := (norm v)
+	      :unless (zerop norm-v)
+		:do (incf (tref v 0 0)
+			     (* (norm v) (signum (tref v 0 0))))
+		    (scale! v (/ (norm v)))
+		    (loop :for j :from k :below n
+			  :do (reflect! R v k j))
+	      :do (push v vs))
+	;; compute Q
+	(let ((Q (eye (list m n) :type (element-type matrix))))
+	  (loop :for k :from (1- n) :downto 0
+		:for v :in vs
+		:do (loop :for j :from 0 :below n
+			  :do (reflect! Q v k j)))
+	  (when (< (ncols Q) (nrows R))
+	    ;; reduced factorization; trim R
+	    (setf R (slice R (list 0 0) (list (ncols Q) (ncols R)))))
+	  (values Q R))))))
 
 (define-backend-function ql (matrix)
   "Finds the QL factorization of MATRIX. Returns two matrices (Q, L).

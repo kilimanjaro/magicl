@@ -230,6 +230,16 @@ ELEMENT-TYPE, CAST, COPY-TENSOR, DEEP-COPY-TENSOR, TREF, SETF TREF)"
                                ,(symbol-name matrix)
                                (shape ,matrix)))))
 
+(defun matrix-norm (matrix)
+  "Compute the 2-norm of MATRIX."
+  (let ((result 0))
+    (dotimes (i (nrows matrix))
+      (dotimes (j (ncols matrix))
+	(let ((v (tref matrix i j)))
+	  (incf result (* v (conjugate v))))))
+    (sqrt result)))
+
+
 ;;; Required abstract-tensor methods
 
 (defmethod order ((m matrix))
@@ -568,14 +578,7 @@ NOTE: If MATRIX is not square, this will compute the reduced QR factorization.")
 	  (n (ncols matrix))
 	  (vs nil)
 	  (R (deep-copy-tensor matrix)))
-      (flet ((norm (m)
-	       (let ((result 0))
-		 (dotimes (i (nrows m))
-		   (dotimes (j (ncols m))
-		     (let ((v (tref m i j)))
-		       (incf result (* v (conjugate v))))))
-		 (sqrt result)))
-	     (reflect! (A v k j)
+      (flet ((reflect! (A v k j)
 	       (let ((v-dot-A
 		       (loop :for i :from k :below m
 			     :for iv :from 0
@@ -587,11 +590,11 @@ NOTE: If MATRIX is not square, this will compute the reduced QR factorization.")
 	;; compute R and vs
 	(loop :for k :below n
 	      :for v := (slice R (list k k) (list m (1+ k)))
-	      :for norm-v := (norm v)
+	      :for norm-v := (matrix-norm v)
 	      :unless (zerop norm-v)
 		:do (incf (tref v 0 0)
-			     (* (norm v) (signum (tref v 0 0))))
-		    (scale! v (/ (norm v)))
+			  (* norm-v (signum (tref v 0 0))))
+		    (scale! v (/ (matrix-norm v)))
 		    (loop :for j :from k :below n
 			  :do (reflect! R v k j))
 	      :do (push v vs))

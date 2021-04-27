@@ -23,6 +23,7 @@
   :maintainer "Rigetti Computing"
   :author "Rigetti Computing"
   :version (:read-file-form "VERSION.txt")
+  :in-order-to ((asdf:test-op (asdf:test-op #:magicl-tests/core)))
   :depends-on (#:alexandria
                #:abstract-classes
                #:policy-cond

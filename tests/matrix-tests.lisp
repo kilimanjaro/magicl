@@ -33,7 +33,6 @@
 (deftest test-matrix-multiplication ()
   "Test multiplication for random pairs of matrices"
   (labels ((mult (a b)
-             (assert (= (magicl:ncols a) (magicl:nrows b)))
              (let* ((m (magicl:nrows a))
                     (n (magicl:ncols b))
                     (p (magicl:ncols a))
@@ -57,7 +56,6 @@
           (is (magicl:=
                (mult a b)
                (magicl:mult a b)))
-
           ;; Check that transposing doesn't affect correctness
           (is (magicl:=
                (mult (magicl:transpose a) c)
@@ -68,7 +66,6 @@
           (is (magicl:=
                (mult (magicl:transpose b) (magicl:transpose a))
                (magicl:mult b a :transa :t :transb :t)))
-
           ;; Check that alpha correctly scales the matrices
           (is (magicl:=
                (mult (magicl:scale a 2) b)
@@ -139,28 +136,14 @@
     ;; Check that doing 2x1 @ 2x2 errors
     (signals error (magicl:@ x m))))
 
-(deftest test-random-unitary-properties ()
-  "Test calls to RANDOM-UNITARY for all float types and sizes 1x1 to 64x64 to check properties"
-  (dolist (type +magicl-float-types+)
-    (loop :for i :from 1 :to 64 :do
-      (let ((m (magicl:random-unitary (list i i) :type type)))
-        (is (> 5e-5 (abs (cl:-
-                          (abs (magicl:det m))
-                          1))))
-        (is (magicl:=
-             (magicl:eye (list i i) :type type)
-             (magicl:@ m (magicl:transpose m))
-             5e-5))))))
-
-
-(deftest test-qr-lisp-special-cases ()
-  "Test that the pure Lisp implementation of QR factorization works as advertised."
+(deftest test-qr-special-cases ()
+  "Test that the QR factorization works as advertised in a few silly cases."
   (dolist (mat (list
 		(magicl:eye 3)
 		(magicl:ones '(3 3))
 		(magicl:ones '(3 1))
 		(magicl:from-list '(#C(1d0 0d0) #C(0d0 1d0) #C(1d0 1d0) #C(0d0 0d0)) '(2 2))))
-    (multiple-value-bind (Q R) (magicl::qr-lisp mat)
+    (multiple-value-bind (Q R) (magicl:qr mat)
       (is (magicl:= (magicl:@ (magicl:dagger Q) Q)
 		    (magicl:eye (magicl:ncols Q) :type (magicl:element-type Q))))
       (is (magicl:= R (magicl:upper-triangular R)))

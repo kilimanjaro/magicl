@@ -48,6 +48,7 @@
                  (:file "tensor")
                  (:file "matrix")
                  (:file "vector")
+                 (:file "matrix-multiply")
                  (:file "types/single-float")
                  (:file "types/double-float")
                  (:file "types/complex-single-float")

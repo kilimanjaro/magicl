@@ -302,15 +302,15 @@ ELEMENT-TYPE, CAST, COPY-TENSOR, DEEP-COPY-TENSOR, TREF, SETF TREF)"
            (list 0 index)
            (list (nrows m) (1+ index)))))
 
+
 (define-extensible-function (mult mult-lisp) (a b &key target alpha beta transa transb)
   (:documentation
    "Library users: consider using MAGICL:@ instead.
 
 Multiply a by b, storing in target or creating a new tensor if target is not specified.
 
-Target cannot be the same as a or b.")
-  ;; TODO: write a lisp impl of this
-  )
+Target cannot be the same as a or b."))
+
 
 (defgeneric @ (matrix &rest matrices)
   (:documentation "Multiplication of matrices")

@@ -22,6 +22,9 @@
   matrix/complex-single-float
   vector/complex-single-float)
 
+(register-matrix-matrix-multiply matrix/complex-single-float (complex single-float))
+(register-matrix-vector-multiply matrix/complex-single-float vector/complex-single-float (complex single-float))
+
 (defmethod dot ((vector1 vector/complex-single-float) (vector2 vector/complex-single-float))
   (assert (cl:= (size vector1) (size vector2))
           () "Vectors must have the same size. The first vector is size ~a and the second vector is size ~a."

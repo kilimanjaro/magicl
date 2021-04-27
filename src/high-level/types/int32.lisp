@@ -21,3 +21,6 @@
   tensor/int32
   matrix/int32
   vector/int32)
+
+(register-matrix-matrix-multiply matrix/int32 (signed-byte 32))
+(register-matrix-vector-multiply matrix/int32 vector/int32 (signed-byte 32))

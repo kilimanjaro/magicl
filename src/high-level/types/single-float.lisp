@@ -22,6 +22,9 @@
   matrix/single-float
   vector/single-float)
 
+(register-matrix-matrix-multiply matrix/single-float single-float)
+(register-matrix-vector-multiply matrix/single-float vector/single-float single-float)
+
 (defmethod =-lisp ((tensor1 tensor/single-float) (tensor2 tensor/single-float) &optional (epsilon *float-comparison-threshold*))
   (unless (equal (shape tensor1) (shape tensor2))
     (return-from =-lisp nil))

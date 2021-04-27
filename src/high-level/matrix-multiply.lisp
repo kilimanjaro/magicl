@@ -19,7 +19,11 @@
 ;;; where LAYOUTA is one of :ROW-MAJOR or :COLUMN-MAJOR, TRANSA is one of :N (no transpose),
 ;;; :T (transpose), :C (conjugate transpose). This is done so that the individual variants
 ;;; may explicity declare types and do fast array lookups, bypassing the slower generic
-;;; machinery of TREF etc.
+;;; machinery of TREF etc. Note that under the hood, :T and :C cases are handled by
+;;; doing a "fast transpose" (i.e. flipping the layout and dimensions of a shallow copy)
+;;; so that subsequently we only need to consider layout information for resolving
+;;; array offsets. Hence within the helper routines below, :C often refers to a simple
+;;; 'conjugate' rather than 'conjugate transpose' operation.
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
 
@@ -28,10 +32,9 @@
 
 Here TRANS controls the interpretation of matrix entries, and may be one of
   :N - normal
-  :T - (implicitly) transpose
-  :C - (implicitly) conjugate transpose."
+  :C - conjugate."
     (check-type layout (member :row-major :column-major))
-    (check-type trans (member :n :t :c))
+    (check-type trans (member :n :c))
     (lambda (storage row col numrows numcols)
       (let ((args (list trans layout)))
         (cond
@@ -39,22 +42,18 @@ Here TRANS controls the interpretation of matrix entries, and may be one of
            `(aref ,storage (+ ,col (the fixnum (* ,row ,numcols)))))
           ((equal args '(:n :column-major))
            `(aref ,storage (+ ,row (the fixnum (* ,col ,numrows)))))
-          ((equal args '(:t :row-major))
-           `(aref ,storage (+ ,row (the fixnum (* ,col ,numrows)))))
-          ((equal args '(:t :column-major))
-           `(aref ,storage (+ ,col (the fixnum (* ,row ,numcols)))))
           ((equal args '(:c :row-major))
            `(conjugate
-             (aref ,storage (+ ,row (the fixnum (* ,col ,numrows))))))
+             (aref ,storage (+ ,col (the fixnum (* ,row ,numcols))))))
           ((equal args '(:c :column-major))
            `(conjugate
-             (aref ,storage (+ ,col (the fixnum (* ,row ,numcols))))))
+             (aref ,storage (+ ,row (the fixnum (* ,col ,numrows))))))
           (t (error "Unexpected arguments for MATRIX-REF-OP"))))))
 
   (defun %matmul-dispatch-index (layouta transa layoutb transb layout)
     "Get the index into the matrix-matrix multiplication dispatch table."
     (let ((layouts '(:row-major :column-major))
-          (flags '(:n :t :c)))
+          (flags '(:n :c)))
       (reduce (lambda (n val-elts)
                 (destructuring-bind (val elts) val-elts
                   (+ (position val elts)
@@ -73,23 +72,38 @@ Returns two values: the dispatch index, and a corresponding LABELS entry."
              (intern (format nil "%MATMUL-~A-~D"
                              element-type
                              idx))))
-      (flet ((outer-loop (i j k max-i max-j max-k)
-               (lambda (body)
-                 `(dotimes (,i ,max-i)
-                    (declare (type fixnum ,i))
-                    (dotimes (,k ,max-k)
-                      (declare (type fixnum ,k))
-                      (dotimes (,j ,max-j)
-                        (declare (type fixnum ,j))
-                        ,body))))))
+      (flet ((loop-over-indices (i j k max-i max-j max-k)
+	       ;; basic strategy: the inner loop should walk along
+	       ;; contiguous data (e.g. along rows for a column major
+	       ;; matrix).  furthermore, since we are writing to the
+	       ;; target matrix, we don't want the middle loop to vary
+	       ;; an index of the target matrix, as this would force
+	       ;; these writes out of cache.  note: this heuristic is
+	       ;; really best when all three matrices have the same
+	       ;; layout...
+	       (let ((outer (ecase layout
+			      (:row-major (list i max-i))
+			      (:column-major (list j max-j))))
+		     (middle (list k max-k))
+		     (inner (ecase layout
+			      (:row-major (list j max-j))
+			      (:column-major (list i max-i)))))
+		 (lambda (body)
+                   `(dotimes ,outer
+                      (declare (type fixnum ,(first outer)))
+                      (dotimes ,middle
+			(declare (type fixnum ,(first middle)))
+			(dotimes ,inner
+                          (declare (type fixnum ,(first inner)))
+                          ,body)))))))
         (values
          idx
          `(,name (a b target alpha beta)
                  (declare (type ,element-type alpha beta))
-                 (let* ((m ,(if (eq :n transa) `(nrows a) `(ncols a)))
-                        (n ,(if (eq :n transb) `(ncols b) `(nrows b)))
-                        (p ,(if (eq :n transa) `(ncols a) `(nrows a)))
-                        (q ,(if (eq :n transb) `(nrows b) `(ncols b)))
+                 (let* ((m (nrows a))
+                        (n (ncols b))
+                        (p (ncols a))
+                        (q (nrows b))
                         (target (or target (zeros (list m n) :type ',element-type :layout ,layout)))
                         (storage-a (storage a))
                         (storage-b (storage b))
@@ -101,7 +115,7 @@ Returns two values: the dispatch index, and a corresponding LABELS entry."
                         (assertion (equal (shape target)
                                           (list m n))))
                      (scale! target beta)
-                     ,(funcall (outer-loop 'i 'j 'k 'm 'n 'p)
+                     ,(funcall (loop-over-indices 'i 'j 'k 'm 'n 'p)
                                `(incf ,(funcall (%matrix-ref-op layout :n)
                                                 'storage-target 'i 'j 'm 'n)
                                       (* alpha
@@ -132,13 +146,13 @@ Returns two values: the dispatch index, and a corresponding LABELS entry."
                 (layout (or (and target (layout target))
                             (layout a))))
            (policy-cond:with-expectations (> speed safety)
-               ((type (member :n :t :c) transa)
-                (type (member :n :t :c) transb))     
+               ((type (member :n :c) transa)
+                (type (member :n :c) transb))     
              (labels
                  (,@(alexandria:map-product         
                         #'specialize
-                      '(:row-major :column-major) '(:n :t :c)
-                      '(:row-major :column-major) '(:n :t :c)
+                      '(:row-major :column-major) '(:n :c)
+                      '(:row-major :column-major) '(:n :c)
                       '(:row-major :column-major)))
                (ecase (%matmul-dispatch-index layouta transa layoutb transb layout)
                  ,@(loop :for (idx . label) :in (nreverse specializations)
@@ -149,7 +163,7 @@ Returns two values: the dispatch index, and a corresponding LABELS entry."
   (defun %vecmul-dispatch-index (layouta transa layout)
     "Get the index into the matrix-vector multiplication dispatch table."
     (let ((layouts '(:row-major :column-major))
-          (flags '(:n :t :c)))
+          (flags '(:n :c)))
       (reduce (lambda (n val-elts)
                 (destructuring-bind (val elts) val-elts
                   (+ (position val elts)
@@ -168,19 +182,19 @@ Returns two values: the dispatch index, and a corresponding LABELS entry."
              (intern (format nil "%VECMUL-~A-~D"
                              element-type
                              idx))))
-      (flet ((outer-loop (i j max-i max-j)
+      (flet ((loop-over-indices (i j max-i max-j)
                (lambda (body)
                  `(dotimes (,i ,max-i)
                     (declare (type fixnum ,i))
                     (dotimes (,j ,max-j)
-                        (declare (type fixnum ,j))
-                        ,body)))))
+                      (declare (type fixnum ,j))
+                      ,body)))))
         (values
          idx
          `(,name (a b target alpha beta)
                  (declare (type ,element-type alpha beta))
-                 (let* ((m ,(if (eq :n transa) `(nrows a) `(ncols a)))
-                        (p ,(if (eq :n transa) `(ncols a) `(nrows a)))
+                 (let* ((m (nrows a))
+                        (p (ncols a))
                         (q (size b))
                         (target (or target (zeros (list m) :type ',element-type)))
                         (storage-a (storage a))
@@ -193,7 +207,7 @@ Returns two values: the dispatch index, and a corresponding LABELS entry."
                         (assertion (equal (shape target)
                                           (list m))))
                      (scale! target beta)
-                     ,(funcall (outer-loop 'i 'j 'm 'p)
+                     ,(funcall (loop-over-indices 'i 'j 'm 'p)
                                `(incf (aref storage-target i)
                                       (* alpha
                                          ,(funcall (%matrix-ref-op layouta transa)
@@ -220,25 +234,42 @@ Returns two values: the dispatch index, and a corresponding LABELS entry."
                 (layout (or (and target (layout target))
                             (layout a))))
            (policy-cond:with-expectations (> speed safety)
-               ((type (member :n :t :c) transa))
+               ((type (member :n :c) transa))
              (labels
                  (,@(alexandria:map-product
                         #'specialize
-                      '(:row-major :column-major) '(:n :t :c)
+                      '(:row-major :column-major) '(:n :c)
                       '(:row-major :column-major)))
                (ecase (%vecmul-dispatch-index layouta transa layout)
                  ,@(loop :for (idx . label) :in (nreverse specializations)
                          :for name := (first label)
-                         :collect `(,idx (,name a b target alpha beta)))))))))))
+                         :collect `(,idx (,name a b target alpha beta))))))))))
+
+  (defun %precompute-transpose (matrix-type mat trans)
+    "Generate an expression to precompute the 'transpose' part of TRANS, applied to MAT.
+
+This is done so that the only TRANS kinds which must be subsequently handled are
+  :N - normal matrix reference
+"
+    (flet ((shallow-copy (mat)
+	     `(,(intern (format nil "COPY-~:@(~A~)" matrix-type)) ,mat)))
+      `(unless (eq :n ,trans)
+	 (setf ,mat ,(shallow-copy mat))
+	 (transpose! ,mat :fast t)
+	 (when (eq :t ,trans)
+	   (setf ,trans :n))))))
 
 
 (defmacro register-matrix-matrix-multiply (matrix-type element-type)
   "Add a specialized matrix-multiply, corresponding to the given MATRIX-TYPE and ELEMENT-TYPE."
   `(defmethod mult-lisp ((a ,matrix-type) (b ,matrix-type) &key target (alpha 1) (beta 0) (transa :n) (transb :n))
+     ,(%precompute-transpose matrix-type 'a 'transa)
+     ,(%precompute-transpose matrix-type 'b 'transb)
      ,(%matmul-dispatch `,element-type 'a 'b 'target 'alpha 'beta 'transa 'transb)))
 
 (defmacro register-matrix-vector-multiply (matrix-type vector-type element-type)
   "Add a specialized matrix-multiply, corresponding to the given MATRIX-TYPE and ELEMENT-TYPE."
   `(defmethod mult-lisp ((a ,matrix-type) (b ,vector-type) &key target (alpha 1) (beta 0) (transa :n) transb)
      (declare (ignore transb))
+     ,(%precompute-transpose matrix-type 'a 'transa)
      ,(%vecmul-dispatch `,element-type 'a 'b 'target 'alpha 'beta 'transa)))

@@ -192,3 +192,28 @@
                              0d0 2d0 0d0 0d0 0d0)
                            '(5 5))))))
 
+
+;; Eigenvalue Tests
+
+(deftest test-hermitian-eig ()
+  "Test that we can compute eigenvectors & values of Hermitian matrices."
+  (let ((matrix-size 5)
+        (repetitions 5)
+        (eig-range 1d0)
+        (element-types (list 'double-float '(complex double-float))))
+    (dolist (element-type element-types)
+      (dotimes (i repetitions)
+        (let* ((evals (sort (loop :for i :below matrix-size
+                                  :collect (random eig-range))
+                            #'<))
+               (D (magicl:from-diag evals :type element-type))
+               (Q (magicl:random-unitary (list matrix-size matrix-size) :type element-type))
+               (M (magicl:@ Q D (magicl:conjugate-transpose Q))))
+          (is (magicl:identity-matrix-p (magicl:@ Q (magicl:conjugate-transpose Q))))
+          (is (magicl:hermitian-matrix-p m))
+          (multiple-value-bind (%evals %evecs)
+              (magicl:hermitian-eig m)
+            (declare (ignore %evecs))
+            (is (every (lambda (a b) (< (abs (- a b)) 1d-8))
+                       evals
+                       (sort (mapcar #'realpart %evals) #'<)))))))))

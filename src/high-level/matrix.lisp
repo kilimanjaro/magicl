@@ -199,7 +199,7 @@ ELEMENT-TYPE, CAST, COPY-TENSOR, DEEP-COPY-TENSOR, TREF, SETF TREF)"
   "Is MATRIX square?"
   (cl:= (nrows matrix) (ncols matrix)))
 
-(defun identity-matrix-p (matrix &optional (epsilon *double-comparison-threshold*))
+(defun identity-matrix-p (matrix &key (epsilon *double-comparison-threshold*))
   "Is the MATRIX an identity matrix"
   (unless (square-matrix-p matrix)
     (return-from identity-matrix-p nil))
@@ -213,11 +213,11 @@ ELEMENT-TYPE, CAST, COPY-TENSOR, DEEP-COPY-TENSOR, TREF, SETF TREF)"
                    (return-from identity-matrix-p nil))))
   t)
 
-(defun unitary-matrix-p (matrix &optional (epsilon *double-comparison-threshold*))
+(defun unitary-matrix-p (matrix &key (epsilon *double-comparison-threshold*))
   "Is MATRIX a unitary matrix?"
   (identity-matrix-p (@ matrix (conjugate-transpose matrix)) epsilon))
 
-(defun hermitian-matrix-p (matrix &optional (epsilon *double-comparison-threshold*))
+(defun hermitian-matrix-p (matrix &key (epsilon *double-comparison-threshold*))
   "Is MATRIX a hermitian matrix?"
   (= matrix (conjugate-transpose matrix) epsilon))
 
@@ -554,6 +554,9 @@ If :SQUARE is T, then the result will be restricted to the lower leftmost square
 
 (define-backend-function eig (matrix)
   "Find the (right) eigenvectors and corresponding eigenvalues of a square matrix M. Returns a list and a tensor (EIGENVALUES, EIGENVECTORS)")
+
+(magicl:define-extensible-function (hermitian-eig hermitian-eig-lisp) (matrix)
+  (:documentation "Ccompute the eigenvectors and corresponding eigenvalues of a square Hermitian matrix M. Returns a list and a tensor (EIGENVALUES, EIGENVECTORS)."))
 
 (define-backend-function lu (matrix)
   "Get the LU decomposition of MATRIX. Returns two tensors (LU, IPIV)")

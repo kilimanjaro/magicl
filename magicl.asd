@@ -57,8 +57,8 @@
                  (:file "types/int32")
                  (:file "constructors")
                  (:file "specialize-constructor")
-                 (:file "polynomial-solver")
-		 (:file "eig")))
+                 (:file "eig")
+                 (:file "polynomial-solver")))
    (:file "magicl")))
 
 ;;; Extension common code

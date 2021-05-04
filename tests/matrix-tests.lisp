@@ -136,19 +136,6 @@
     ;; Check that doing 2x1 @ 2x2 errors
     (signals error (magicl:@ x m))))
 
-(deftest test-qr-special-cases ()
-  "Test that the QR factorization works as advertised in a few silly cases."
-  (dolist (mat (list
-		(magicl:eye 3)
-		(magicl:ones '(3 3))
-		(magicl:ones '(3 1))
-		(magicl:from-list '(#C(1d0 0d0) #C(0d0 1d0) #C(1d0 1d0) #C(0d0 0d0)) '(2 2))))
-    (multiple-value-bind (Q R) (magicl:qr mat)
-      (is (magicl:= (magicl:@ (magicl:dagger Q) Q)
-		    (magicl:eye (magicl:ncols Q) :type (magicl:element-type Q))))
-      (is (magicl:= R (magicl:upper-triangular R)))
-      (is (magicl:= mat (magicl:@ Q R))))))
-
 ;;; Block Matrix Routines
 
 (deftest test-block-diagonal ()
@@ -193,7 +180,21 @@
                            '(5 5))))))
 
 
-;; Eigenvalue Tests
+;; QR and Eigenvalue Tests
+
+(deftest test-qr-special-cases ()
+  "Test that the QR factorization works as advertised in a few silly cases."
+  (dolist (mat (list
+		(magicl:eye 3)
+		(magicl:ones '(3 3))
+		(magicl:ones '(3 1))
+                (magicl:ones '(1 3))
+		(magicl:from-list '(#C(1d0 0d0) #C(0d0 1d0) #C(1d0 1d0) #C(0d0 0d0)) '(2 2))))
+    (multiple-value-bind (Q R) (magicl:qr mat)
+      (is (magicl:= (magicl:@ (magicl:dagger Q) Q)
+		    (magicl:eye (magicl:ncols Q) :type (magicl:element-type Q))))
+      (is (magicl:= R (magicl:upper-triangular R)))
+      (is (magicl:= mat (magicl:@ Q R))))))
 
 (deftest test-hermitian-eig ()
   "Test that we can compute eigenvectors & values of Hermitian matrices."
@@ -211,9 +212,146 @@
                (M (magicl:@ Q D (magicl:conjugate-transpose Q))))
           (is (magicl:identity-matrix-p (magicl:@ Q (magicl:conjugate-transpose Q))))
           (is (magicl:hermitian-matrix-p m))
-          (multiple-value-bind (%evals %evecs)
-              (magicl:hermitian-eig m)
-            (declare (ignore %evecs))
+          (multiple-value-bind (%evals Q)
+              (magicl::hermitian-eig m)
             (is (every (lambda (a b) (< (abs (- a b)) 1d-8))
                        evals
-                       (sort (mapcar #'realpart %evals) #'<)))))))))
+                       (sort (mapcar #'realpart %evals) #'<)))
+            (is (magicl:= m (magicl:@ Q (magicl:from-diag %evals :type element-type) (magicl:dagger Q))))))))))
+
+(deftest test-bidiagonal ()
+  "Test that we reduce an arbitrary matrix to bidiagonal form."
+  (let* ((u (magicl:random-unitary (list 5 5)))
+         (d (magicl:from-diag '(1d0 2d0 3d0 4d0 5d0)))
+         (v (magicl:random-unitary (list 5 5)))
+         (m (magicl:@ u d (magicl:dagger v))))
+    (multiple-value-bind (u b v) (magicl::bidiagonal m)
+      (is (magicl:= m (magicl:@ u b (magicl:dagger v)))))))
+
+(deftest test-svd ()
+  "Test the full and reduced SVDs."
+  (labels ((mul-diag-times-gen (diag matrix)
+             "Returns a newly allocated matrix resulting from the product of DIAG (a diagonal real matrix) with MATRIX (a complex matrix)."
+             #+ignore
+             (declare (type matrix diag matrix)
+                      (values matrix))
+             (let* ((m (magicl:nrows diag))
+                    (k (magicl:ncols matrix))
+                    (result (magicl:empty (list m k))))
+               (dotimes (i (min m (magicl:ncols diag)) result)
+                 (let ((dii (magicl:tref diag i i)))
+                   (dotimes (j k)
+                     (setf (magicl:tref result i j)
+                           (* dii (magicl:tref matrix i j))))))))
+
+           (norm-inf (matrix)
+             "Return the infinity norm of vec(MATRIX)."
+             (let ((data (magicl::storage matrix)))
+               (reduce #'max data :key #'abs)))
+
+           (zero-p (matrix &optional (tolerance (* 1.0d2 double-float-epsilon)))
+             "Return T if MATRIX is close to zero (within TOLERANCE)."
+             (< (norm-inf matrix) tolerance))
+
+           (check-full-svd (matrix)
+             "Validate full SVD of MATRIX."
+             (let ((m (magicl:nrows matrix))
+                   (n (magicl:ncols matrix)))
+               (multiple-value-bind (u sigma vh)
+                   (magicl:svd matrix)
+                 (is (= (magicl:nrows u) (magicl:ncols u) m))
+                 (is (and (= (magicl:nrows sigma) m) (= (magicl:ncols sigma) n)))
+                 (is (= (magicl:nrows vh) (magicl:ncols vh) n))
+                 (print 
+
+(deftest test-hermitian-eig ()
+  "Test that we can compute eigenvectors & values of Hermitian matrices."
+  (let ((matrix-size 5)
+        (repetitions 5)
+        (eig-range 1d0)
+        (element-types (list 'double-float '(complex double-float))))
+    (dolist (element-type element-types)
+      (dotimes (i repetitions)
+        (let* ((evals (sort (loop :for i :below matrix-size
+                                  :collect (random eig-range))
+                            #'<))
+               (D (magicl:from-diag evals :type element-type))
+               (Q (magicl:random-unitary (list matrix-size matrix-size) :type element-type))
+               (M (magicl:@ Q D (magicl:conjugate-transpose Q))))
+          (is (magicl:identity-matrix-p (magicl:@ Q (magicl:conjugate-transpose Q))))
+          (is (magicl:hermitian-matrix-p m))
+          (multiple-value-bind (%evals Q)
+              (magicl::hermitian-eig m)
+            (is (every (lambda (a b) (< (abs (- a b)) 1d-8))
+                       evals
+                       (sort (mapcar #'realpart %evals) #'<)))
+            (is (magicl:= m (magicl:@ Q (magicl:from-diag %evals :type element-type) (magicl:dagger Q))))))))))
+
+(deftest test-bidiagonal ()
+  "Test that we reduce an arbitrary matrix to bidiagonal form."
+  (let* ((u (magicl:random-unitary (list 5 5)))
+         (d (magicl:from-diag '(1d0 2d0 3d0 4d0 5d0)))
+         (v (magicl:random-unitary (list 5 5)))
+         (m (magicl:@ u d (magicl:dagger v))))
+    (multiple-value-bind (u b v) (magicl::bidiagonal m)
+      (is (magicl:= m (magicl:@ u b (magicl:dagger v)))))))
+
+(deftest test-svd ()
+  "Test the full and reduced SVDs."
+  (labels ((mul-diag-times-gen (diag matrix)
+             "Returns a newly allocated matrix resulting from the product of DIAG (a diagonal real matrix) with MATRIX (a complex matrix)."
+             #+ignore
+             (declare (type matrix diag matrix)
+                      (values matrix))
+             (let* ((m (magicl:nrows diag))
+                    (k (magicl:ncols matrix))
+                    (result (magicl:empty (list m k))))
+               (dotimes (i (min m (magicl:ncols diag)) result)
+                 (let ((dii (magicl:tref diag i i)))
+                   (dotimes (j k)
+                     (setf (magicl:tref result i j)
+                           (* dii (magicl:tref matrix i j))))))))
+
+           (norm-inf (matrix)
+             "Return the infinity norm of vec(MATRIX)."
+             (let ((data (magicl::storage matrix)))
+               (reduce #'max data :key #'abs)))
+
+           (zero-p (matrix &optional (tolerance (* 1.0d2 double-float-epsilon)))
+             "Return T if MATRIX is close to zero (within TOLERANCE)."
+             (< (norm-inf matrix) tolerance))
+
+           (check-full-svd (matrix)
+             "Validate full SVD of MATRIX."
+             (let ((m (magicl:nrows matrix))
+                   (n (magicl:ncols matrix)))
+               (multiple-value-bind (u sigma vh)
+                   (magicl:svd matrix)
+                 (is (= (magicl:nrows u) (magicl:ncols u) m))
+                 (is (and (= (magicl:nrows sigma) m) (= (magicl:ncols sigma) n)))
+                 (is (= (magicl:nrows vh) (magicl:ncols vh) n))
+                 (is (zero-p (magicl:.- matrix (magicl:@ u (mul-diag-times-gen sigma vh))))))))
+
+           (check-reduced-svd (matrix)
+             "Validate reduced SVD of MATRIX."
+             (let* ((m (magicl:nrows matrix))
+                    (n (magicl:ncols matrix))
+                    (k (min m n)))
+
+               (multiple-value-bind (u sigma vh)
+                   (magicl:svd matrix :reduced t)
+                 (is (and (= (magicl:nrows u) m)
+                          (= (magicl:ncols u) k)))
+                 (is (= (magicl:nrows sigma) (magicl:ncols sigma) k))
+                 (is (and (= (magicl:nrows vh) k)
+                          (= (magicl:ncols vh) n)))
+                 (is (zero-p (magicl:.- matrix (magicl:@ u (mul-diag-times-gen sigma vh)))))))))
+
+    (let ((tall-thin-matrix (magicl:rand '(8 2))))
+      (check-full-svd tall-thin-matrix)
+      (check-reduced-svd tall-thin-matrix))
+
+    (let ((short-fat-matrix (magicl:rand '(2 8))))
+;      (check-full-svd short-fat-matrix)
+;     (check-reduced-svd short-fat-matrix)
+      )))

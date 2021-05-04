@@ -58,6 +58,88 @@ Only updates rows with index >= START-IDX."
                     (tref A p j) (+ (* s t1) (* c t2))))
     A))
 
+
+(defstruct householder-reflection
+  "Representation of a Householder reflection."
+  v (idx 0))
+
+(defun column->householder (A i0 j0)
+  "Construct a Householder reflection which, when applied from the left, puts zeros in column J0 below row I0."
+  (let* ((m (nrows A))      
+         (v (zeros (list (- m i0)) :type (element-type A))))
+    (loop :for i :from i0 :below m
+          :for iv :from 0
+          :do (setf (tref v iv) (tref A i j0)))
+    (let ((norm-v (norm v)))
+      (if (zerop norm-v)
+          (make-householder-reflection)
+          (let ((v0 (tref v 0)))
+            (incf (tref v 0)                ; TODO: revisit this
+                  (* norm-v (/ v0 (abs v0))))
+            (scale! v (/ (norm v)))
+            (make-householder-reflection :v v :idx j0))))))
+
+(defun row->householder (A i0 j0)
+  "Construct a Householder reflection which, when applied from the right, puts zeros in row I0 to the right of column J0."
+  (let* ((n (ncols A))
+         (v (zeros (list (- n j0)) :type (element-type A))))
+    (loop :for j :from j0 :below n
+          :for jv :from 0
+          :do (setf (tref v jv) (conjugate (tref A i0 j))))
+    (let ((norm-v (norm v)))
+      (if (zerop norm-v)
+          (make-householder-reflection)
+          (let ((v0 (tref v 0)))
+            (incf (tref v 0)
+                  (* norm-v (/ v0 (abs v0))))
+            (scale! v (/ (norm v)))
+            (make-householder-reflection :v v :idx i0))))))
+
+(defun left-apply-householder! (A hh)
+  "Apply the Householder reflection HH to A[i:,j:], from the left."
+  (when (null (householder-reflection-v hh))
+    (return-from left-apply-householder! A))
+  (let* ((m (nrows A))
+         (n (ncols A))
+         (v (householder-reflection-v hh))
+         (i0 (- m (size v))))
+    (flet ((column-reflect! (j)
+             "Reflect A[i0:m,j]."
+             (let ((v-dot-A
+                     (loop :for i :from i0 :below m
+                           :for iv :from 0
+                           :sum (* (conjugate (tref v iv)) (tref A i j)))))
+               (loop :for i :from i0 :below m
+                     :for iv :from 0
+                     :do (decf (tref A i j)
+                               (* 2 (tref v iv) v-dot-A))))))
+      (loop :for j :from (householder-reflection-idx hh) :below n
+            :do (column-reflect! j))))
+  A)
+
+(defun right-apply-householder! (A hh)
+  "Apply the Householder reflection HH to A[i:,j:] from the right."
+  (declare (optimize debug))
+  (when (null (householder-reflection-v hh))
+    (return-from right-apply-householder! A))
+  (let* ((m (nrows A))
+         (n (ncols A))
+         (v (householder-reflection-v hh))
+         (j0 (- n (size v))))
+    (flet ((row-reflect! (i)
+             "Reflect A[i,j0:m] across (dagger V)."
+             (let ((v*-dot-a
+                     (loop :for j :from j0 :below n
+                           :for iv :from 0
+                           :sum (* (tref A i j) (tref v iv)))))
+               (loop :for j :from j0 :below n
+                     :for iv :from 0
+                     :do (decf (tref A i j)
+                               (* 2 v*-dot-a (conjugate (tref v iv))))))))
+      (loop :for i :from (householder-reflection-idx hh) :below m
+            :do (row-reflect! i))))
+  A)
+
 ;;; TODO: - rename HESSENBERG to TRIDIAGONAL-FORM
 ;;;       - get Q matrix from above
 ;;;       - apply givens rotation to Q
@@ -68,107 +150,100 @@ Only updates rows with index >= START-IDX."
                   (* scalar (tref matrix i idx)))
         :finally (return matrix)))
 
+
+;;; QR
+
+(defun %qr-lisp (matrix &key (reduced t))
+  (let* ((m (nrows matrix))
+	 (n (ncols matrix))
+         (p (min m n))
+	 (hhs nil)
+         (Q (eye (list m (if reduced p m)) :type (element-type matrix)))
+	 (R (deep-copy-tensor matrix)))
+    ;; compute R and vs
+    (loop :for k :below p
+          :for hh := (column->householder R k k)
+          :do (left-apply-householder! R hh)
+              (push hh hhs))
+    ;; compute Q
+    (loop :for hh :in hhs
+          :do (left-apply-householder! Q hh))
+    (when reduced
+      ;; reduced factorization; trim R
+      (setf R (slice R (list 0 0) (list p (ncols R)))))
+    ;; TODO: fix this with the choice of householder coeffs
+    ;; force positive values on the diagonal
+    (values Q R)))
+
+(defmethod qr-lis ((matrix matrix))
+  (%qr-lisp matrix :reduced (< (ncols matrix) (nrows matrix))))
+
+;;;
+
 (defun hessenberg (matrix)
   "Reduce MATRIX to Hessenberg form via a sequence of unitary similarity transformations."
   (let* ((m (nrows matrix))
 	 (n (ncols matrix))
-	 (vs nil)
+	 (hhs nil)
 	 (H (deep-copy-tensor matrix))
          (Q (eye (list m n) :type (element-type matrix))))
-    (flet ((column-reflect! (A v k j)
-	     "Reflect A[k:m,j] across V."
-	     (let ((v-dot-A
-		     (loop :for i :from k :below m
-			   :for iv :from 0
-			   :sum (* (conjugate (tref v iv 0)) (tref A i j)))))
-	       (loop :for i :from k :below m
-		     :for iv :from 0
-		     :do (decf (tref A i j)
-			       (* 2 (tref v iv 0) v-dot-A)))))
-	   (row-reflect! (A v k i)
-	     "Reflect A[i,k:n] across (dagger V)."
-	     (let ((v*-dot-A
-		     (loop :for j :from k :below n
-			   :for iv :from 0
-			   :sum (* (tref A i j) (tref v iv 0)))))
-	       (loop :for j :from k :below n
-		     :for iv :from 0
-		     :do (decf (tref A i j)
-			       (* 2 (conjugate (tref v iv 0)) v*-dot-A))))))
-      (loop :for k :below (1- m)
-	    ;; note: for Hessenberg we take V to have one less element
-	    ;; than with "normal" QR.
-	    :for v := (slice H (list (1+ k) k) (list m (1+ k)))
-	    :for norm-v := (matrix-norm v)
-	    :unless (zerop norm-v)
-	      :do (incf (tref v 0 0)
-			(* norm-v (signum (tref v 0 0))))
-		  (scale! v (/ (matrix-norm v)))
-		  (loop :for j :from k :below n
-			:do (column-reflect! H v (1+ k) j))
-		  ;; for Hessenberg we are also applying similarity transformations,
-		  ;; hence need to reflect rows by (dagger V).
-		  (loop :for i :below m
-			:do (row-reflect! H v (1+ k) i))
-	    :do (push v vs))
-      ;; update Q
-      (loop :for k :from (- m 2) :downto 0
-              :for v :in vs
-              :do (loop :for j :below n
-                        :do (column-reflect! Q v (1+ k) j)))
-      ;; ensure H is real by absorbing phases into Q
-      ;; basic idea: M = Q H Q^h = Q U^h U H U^h U Q^h where U is a diagonal
-      ;; unitary matrix such that U H U^h is real tridiagonal
-      (loop :with z := 1
-            :for k :from 1 :below m
-            :for w := (tref H k (1- k))
-            :unless (zerop (imagpart w))
-              :do (let* ((alpha (/ (conjugate w) (abs w)))
-                         (r (realpart (* w alpha))))
-                    (setf z (* z alpha))
-                    ;; we "implicitly" scale row k of H by (conjugate z)
-                    ;; and explicitly column k of H by z
-                    (scale-column! Q k (conjugate z))
-                    ;; end result of this scaling: H will be real
-                    (setf (tref H k (1- k)) r
-                          (tref H (1- k) k) r)))
-      (values H Q))))
+    (loop :for k :below (1- m)
+          :for hh := (column->householder H (1+ k) k)
+          :do (left-apply-householder! H hh)
+              (right-apply-householder! H hh)
+              (push hh hhs))
+    ;; update Q
+    (loop :for hh :in hhs
+          :do (left-apply-householder! Q hh))
+    ;; ensure H is real by absorbing phases into Q
+    ;; basic idea: M = Q H Q^h = Q U^h U H U^h U Q^h where U is a diagonal
+    ;; unitary matrix such that U H U^h is real tridiagonal
+    (loop :with z := 1
+          :for k :from 1 :below m
+          :for w := (tref H k (1- k))
+          :unless (zerop (imagpart w))
+            :do (let* ((alpha (/ (conjugate w) (abs w)))
+                       (r (realpart (* w alpha))))
+                  (setf z (* z alpha))
+                  ;; we "implicitly" scale row k of H by (conjugate z)
+                  ;; and explicitly column k of H by z
+                  (scale-column! Q k (conjugate z))
+                  ;; end result of this scaling: H will be real
+                  (setf (tref H k (1- k)) r
+                        (tref H (1- k) k) r)))
+    (values H Q)))
 
 
-;; (defun hessenberg-qr! (matrix)
-;;   "Compute the QR factorization of a square Hessenberg matrix, via Givens rotations.
+(defun bidiagonal (matrix)
+  "Reduce MATRIX to bidiagonal form via left and right multiplication by unitary transformations."
+  (declare (optimize debug))
+  (let* ((m (nrows matrix))
+	 (n (ncols matrix))
+         (left-hhs nil)
+	 (right-hhs nil)
+	 (H (deep-copy-tensor matrix)))
+    (assert (cl:= m n))
+    (dotimes (k m)
+      (let ((hh (column->householder H k k)))
+        (left-apply-householder! H hh)
+        (push hh left-hhs))
+      (when (< k (- n 2))
+        (let ((hh (row->householder H k (1+ k))))
+          (right-apply-householder! H hh)
+          (push hh right-hhs))))
+    (let ((U (eye (list m m) :type (element-type matrix)))
+          (V (eye (list n n) :type (element-type matrix))))
+      (loop :for hh :in left-hhs
+            :do (left-apply-householder! U hh))
+      (loop :for hh :in right-hhs
+            :do (left-apply-householder! V hh))
+      (values U H V))))
 
-;; Updates MATRIX, so that it is upper triangular. Returns the list of Givens rotations defining Q."
-;;   (let ((m (nrows matrix))
-;;         (n (ncols matrix))
-;;         (gs nil))
-;;     (assert (cl:= m n))
-;;     (loop :for i :below (1- n)
-;;           :for (c s) := (multiple-value-list
-;;                          (givens-entries (tref matrix i i) (tref matrix (1+ i) i)))
-;;           :for g := (make-givens-rotation :i i :j (1+ i) :c c :s s)
-;;           :do (left-apply-givens! matrix g :start-idx i) ; TODO: end-idx = min(i+2, (1- n))
-;;               (push g gs))
-;;     gs))
 
-
-;; (defun incf-diag! (matrix val)
-;;   (assert (cl:= (nrows matrix) (ncols matrix)))
-;;   (dotimes (i (nrows matrix))
-;;     (incf (tref matrix i i) val))
-;;   matrix)
-
-(defun wilkinson-shift (A)
-  (assert (cl:= (nrows A) (ncols A)))
-  ;; bottom right 2x2 block looks like
-  ;; [ ajj ajk ; akj akk]
+(defun wilkinson-shift (ajj ajk akk)
+  "Get the eigenvalue of [ajj ajk; ajk akk] closest to akk."
   ;; The following is from Golub & Van Loan sec 8.3.5
-  (let* ((k (1- (nrows A)))
-         (j (1- k))
-         (ajj (tref A j j))
-         (ajk (tref A j k))
-         (akk (tref A k k))
-         (ajk2 (* ajk (conjugate ajk)))
+  (let* ((ajk2 (* ajk (conjugate ajk)))
          (delta (/ (- ajj akk) 2))
          (d2 (* delta delta))
          (sgnd (if (minusp delta) -1d0 1d0)) ; we do NOT want SIGNUM here
@@ -180,7 +255,9 @@ Only updates rows with index >= START-IDX."
 
 (defun qrstep! (A)
   (let* ((n (ncols A))
-         (shift (wilkinson-shift A))
+         (shift (wilkinson-shift (tref A (- n 2) (- n 2))
+                                 (tref A (- n 2) (1- n))
+                                 (tref A (1- n) (1- n))))
          (x (- (tref A 0 0) shift))
          (z (tref A 1 0)))
     (loop :for k :below (1- n)
@@ -226,6 +303,94 @@ Only updates rows with index >= START-IDX."
                   (decf i)
             :finally (push (tref H 0 0) eigs))
       (values eigs Q))))
+
+(defun svdstep! (A)
+  (let* ((m (nrows A))
+         (n (ncols A))
+         (shift (wilkinson-shift (tref A (- m 2) (- n 2))
+                                 (tref A (- m 2) (1- n))
+                                 (tref A (1- m) (1- n))))
+         (y (- (tref A 0 0) shift))
+         (z (tref A 0 1))
+         (gs nil))
+    (dotimes (k (1- n))
+      (multiple-value-bind (c s) (givens-entries y z)
+        (let ((g (make-givens-rotation :i k :j (1+ k) :c c :s s)))
+          (right-apply-givens! A g)
+          (push g gs)
+          (setf y (tref A k k)
+                z (tref A (1+ k) k)))
+        (multiple-value-bind (c s) (givens-entries y z)
+          (let ((g (make-givens-rotation :i k :j (1+ k) :c c :s s)))
+            (left-apply-givens! A g)
+            (push g gs)
+            (when (< k (- n 2))
+              (setf y (tref A k (1+ k))
+                    z (tref A k (+ k 2))))))))
+    (nreverse gs)))
+
+;;; TODO: consistent use of M and N
+
+
+(defun unitary-extension (columns)
+  (let ((m (nrows columns))
+        (n (ncols columns)))
+    (assert (<= n m))
+    (let ((u (zeros (list m m) :type (element-type columns))))
+      (slice-to columns (list 0 0) (list m n)
+                u (list 0 0))
+      (multiple-value-bind (q r) (qr u)
+        (declare (ignore r))
+        q))))
+
+(defun svd-lisp (matrix &key reduced)
+  (multiple-value-bind (Q R) (%qr-lisp matrix)
+    (let ((svals nil))
+      (multiple-value-bind (U B V) (bidiagonal R)
+        ;; TODO: realpart
+        (loop :with i := (1- (nrows B))
+              :until (zerop i)
+              :do (loop :for (gv gu) :on (svdstep! B) :by #'cddr
+                        :do (right-apply-givens! U gu)
+                            (right-apply-givens! V gv))
+              :when (<= (abs (tref B (1- i) i))
+                        (* *double-comparison-threshold* ; TODO
+                           (+ (abs (tref B (1- i) (1- i))) (abs (tref B i i)))))
+                :do (push (tref B i i) svals)
+                    (setf B (slice B (list 0 0) (list i i)))
+                    (decf i)
+              :finally (push (tref B 0 0) svals))
+        (setf U (@ Q U))
+        ;; permute singular values
+        ;; we want positive values, from greatest to smallest
+        (let ((U-sorted (zeros (shape U) :type (element-type U)))
+              (Vt-sorted (zeros (shape V) :type (element-type V))))
+          (let ((svals-sorted
+                  (loop :with tagged := (loop :for i :from 0 :for v :in svals :collect (cons i v))
+                        :for (old-idx . val) :in (sort tagged #'> :key (lambda (x) (abs (cdr x))))
+                        :for new-idx :from 0
+                        :do (dotimes (i (nrows U))
+                              (setf (tref U-sorted i new-idx)                                    
+                                    (if (minusp val)
+                                        (- (tref U i old-idx))
+                                        (tref U i old-idx))))
+                            (dotimes (j (ncols V))
+                              (setf (tref Vt-sorted j new-idx)
+                                    (tref V old-idx j)))
+                        :collect (abs val))))
+            (print U-sorted)
+            (if reduced
+                (values U-sorted
+                        (from-diag svals-sorted :type (element-type matrix))
+                        Vt-sorted)
+                (let ((d (zeros (list (nrows matrix) (ncols matrix)) :type (element-type matrix))))
+                  (loop :with etype := (element-type matrix)
+                        :for i :below (min (nrows matrix) (ncols matrix))
+                        :do (setf (tref d i i) (coerce (pop svals-sorted) etype)))
+                  (values (unitary-extension U-sorted)
+                          d
+                          Vt-sorted)))))))))
+
 
 (defun hilbert-matrix (n)
   (let ((H (empty (list n n) :type 'double-float)))

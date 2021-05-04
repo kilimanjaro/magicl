@@ -82,12 +82,10 @@
                                     '(4 4)
                                     :type '(complex double-float))))
     ;; Check that it yields the right dimensions.
-    (is (cl:= (magicl:nrows xxx) (magicl:ncols xxx) (expt matrix-dim 3)))
-    ))
+    (is (cl:= (magicl:nrows xxx) (magicl:ncols xxx) (expt matrix-dim 3)))))
 
-
-(deftest test-svd ()
-  "Test the full and reduced SVDs."
+(deftest test-full-svd ()
+  "Test the full SVD."
   (labels ((mul-diag-times-gen (diag matrix)
              "Returns a newly allocated matrix resulting from the product of DIAG (a diagonal real matrix) with MATRIX (a complex matrix)."
              #+ignore
@@ -120,30 +118,13 @@
                  (is (= (magicl:nrows u) (magicl:ncols u) m))
                  (is (and (= (magicl:nrows sigma) m) (= (magicl:ncols sigma) n)))
                  (is (= (magicl:nrows vh) (magicl:ncols vh) n))
-                 (is (zero-p (magicl:.- matrix (magicl:@ u (mul-diag-times-gen sigma vh))))))))
-
-           (check-reduced-svd (matrix)
-             "Validate reduced SVD of MATRIX."
-             (let* ((m (magicl:nrows matrix))
-                    (n (magicl:ncols matrix))
-                    (k (min m n)))
-
-               (multiple-value-bind (u sigma vh)
-                   (magicl:svd matrix :reduced t)
-                 (is (and (= (magicl:nrows u) m)
-                          (= (magicl:ncols u) k)))
-                 (is (= (magicl:nrows sigma) (magicl:ncols sigma) k))
-                 (is (and (= (magicl:nrows vh) k)
-                          (= (magicl:ncols vh) n)))
                  (is (zero-p (magicl:.- matrix (magicl:@ u (mul-diag-times-gen sigma vh)))))))))
 
     (let ((tall-thin-matrix (magicl:rand '(8 2))))
-      (check-full-svd tall-thin-matrix)
-      (check-reduced-svd tall-thin-matrix))
+      (check-full-svd tall-thin-matrix))
 
     (let ((short-fat-matrix (magicl:rand '(2 8))))
-      (check-full-svd short-fat-matrix)
-      (check-reduced-svd short-fat-matrix))))
+      (check-full-svd short-fat-matrix))))
 
 
 (deftest test-csd-2x2-basic ()

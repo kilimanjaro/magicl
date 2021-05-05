@@ -186,7 +186,7 @@ Only updates rows with index >= START-IDX."
                 (scale-row! R i (/ (conjugate val) (abs val))))
     (values Q R)))
 
-(defmethod qr-lis ((matrix matrix))
+(defmethod qr-lisp ((matrix matrix))
   (%qr-lisp matrix :reduced (< (ncols matrix) (nrows matrix))))
 
 ;;;

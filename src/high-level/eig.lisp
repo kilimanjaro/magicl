@@ -286,11 +286,11 @@ Only updates rows with index >= START-IDX."
   (typecase matrix
     (matrix/complex-single-float
      (let ((result (empty (shape matrix) :type 'single-float)))
-      (map-to #'realpart matrix result)
+       (map-to #'realpart matrix result)
        result))
     (matrix/complex-double-float
      (let ((result (empty (shape matrix) :type 'double-float)))
-      (map-to #'realpart matrix result)
+       (map-to #'realpart matrix result)
        result))
     (otherwise matrix)))
 
@@ -313,7 +313,17 @@ Only updates rows with index >= START-IDX."
                   (setf H (slice H (list 0 0) (list i i)))
                   (decf i)
             :finally (push (tref H 0 0) eigs))
-      (values eigs Q))))
+      (let* ((Q-sorted (zeros (shape Q) :type (element-type Q)))
+             (eigs-sorted
+               (loop :with tagged := (loop :for i :from 0 :for v :in eigs :collect (cons i v))
+                     :for (old-idx . val) :in (sort tagged #'< :key #'cdr)
+                     :for new-idx :from 0
+                     :do (dotimes (i (nrows Q))
+                           (setf (tref Q-sorted i new-idx)
+                                 (tref Q i old-idx)))
+                     :collect val)))
+        (values eigs-sorted
+                Q-sorted)))))
 
 (defun svdstep! (B)
   (flet ((abs2 (x)
@@ -424,9 +434,14 @@ Only updates rows with index >= START-IDX."
            H)
     H))
 
-(defun random-hermitian (n)
-  (let ((a (rand (list n n) :type '(complex double-float)))
-        (b (rand (list n n) :type '(complex double-float))))
-    (scale! b #C(0d0 1d0))
-    (let ((c (.+ a b)))
-      (.+ c (conjugate-transpose c)))))
+(defun random-hermitian (n &key (type *default-tensor-type*))
+  (cond ((member type '(single-float double-float))
+         (let ((a (rand (list n n) :type type)))
+           (.+ a (transpose a))))
+        ((member type '((complex single-float) (complex double-float)) :test #'equal)
+         (let ((a (rand (list n n) :type type))
+               (b (rand (list n n) :type type)))
+           (scale! b #C(0d0 1d0))
+           (let ((c (.+ a b)))
+             (.+ c (conjugate-transpose c)))))
+        (t (error "Unexpected tensor type."))))

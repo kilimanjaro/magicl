@@ -23,7 +23,8 @@
                (:file "abstract-tensor-tests")
                (:file "specialization-tests")
                (:file "constructor-tests")
-               (:file "matrix-tests")))
+               (:file "matrix-tests")
+               (:file "csd-tests")))
 
 (asdf:defsystem #:magicl-tests
   :license "BSD 3-Clause (See LICENSE.txt)"

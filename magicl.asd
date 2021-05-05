@@ -58,6 +58,7 @@
                  (:file "constructors")
                  (:file "specialize-constructor")
                  (:file "eig")
+                 (:file "csd")
                  (:file "polynomial-solver")))
    (:file "magicl")))
 

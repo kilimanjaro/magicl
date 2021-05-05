@@ -188,7 +188,6 @@
 		(magicl:eye 3)
 		(magicl:ones '(3 3))
 		(magicl:ones '(3 1))
-                (magicl:ones '(1 3))
 		(magicl:from-list '(#C(1d0 0d0) #C(0d0 1d0) #C(1d0 1d0) #C(0d0 0d0)) '(2 2))))
     (multiple-value-bind (Q R) (magicl:qr mat)
       (is (magicl:= (magicl:@ (magicl:dagger Q) Q)
@@ -198,27 +197,17 @@
 
 (deftest test-hermitian-eig ()
   "Test that we can compute eigenvectors & values of Hermitian matrices."
-  (let ((matrix-size 5)
-        (repetitions 5)
-        (eig-range 1d0)
+  (let ((matrix-size 8)
+        (repetitions 10)
         (element-types (list 'double-float '(complex double-float))))
     (dolist (element-type element-types)
       (dotimes (i repetitions)
-        (let* ((evals (sort (loop :for i :below matrix-size
-                                  :collect (random eig-range))
-                            #'<))
-               (D (magicl:from-diag evals :type element-type))
-               (Q (magicl:random-unitary (list matrix-size matrix-size) :type element-type))
-               (M (magicl:@ Q D (magicl:conjugate-transpose Q))))
-          (is (magicl:identity-matrix-p (magicl:@ Q (magicl:conjugate-transpose Q))))
-          (is (magicl:hermitian-matrix-p m))
-          (multiple-value-bind (%evals Q)
-              (magicl::hermitian-eig m)
-            (is (every (lambda (a b) (< (abs (- a b)) 1d-8))
-                       evals
-                       (sort (mapcar #'realpart %evals) #'<)))
-            (is (magicl:= m (magicl:@ Q (magicl:from-diag %evals :type element-type) (magicl:dagger Q))
-                          1d-10)))))))) ; TODO: pick this systematically
+        (let ((H (magicl::random-hermitian matrix-size :type element-type)))
+          (multiple-value-bind (evals Q) (magicl:hermitian-eig H)
+            (let ((recovered (magicl:@ Q
+                                       (magicl:from-diag evals :type element-type)
+                                       (magicl:dagger Q))))
+              (is (magicl:= H recovered 1d-12))))))))) ; TODO: pick this systematically
 
 
 (deftest test-unitary-extension ()

@@ -74,7 +74,6 @@ The function returns U1, U2, C, S, and V2H."
         (multiple-value-bind (lambda2 v2)
             (hermitian-eig b)
           (declare (ignorable lambda2))
-
           (let* ((u1 (scale! (@ w1 v2) -1)) ; Absorb the negative sign in the unitary matrix.
                  (u2 (@ w2 v2))
                  (v2h (conjugate-transpose v2))

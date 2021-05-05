@@ -555,7 +555,7 @@ If :SQUARE is T, then the result will be restricted to the lower leftmost square
 (define-backend-function eig (matrix)
   "Find the (right) eigenvectors and corresponding eigenvalues of a square matrix M. Returns a list and a tensor (EIGENVALUES, EIGENVECTORS)")
 
-(magicl:define-extensible-function (hermitian-eig hermitian-eig-lisp) (matrix)
+(define-extensible-function (hermitian-eig hermitian-eig-lisp) (matrix)
   (:documentation "Ccompute the eigenvectors and corresponding eigenvalues of a square Hermitian matrix M. Returns a list and a tensor (EIGENVALUES, EIGENVECTORS)."))
 
 (define-backend-function lu (matrix)
@@ -600,13 +600,13 @@ NOTE: If MATRIX is not square, this will compute the reduced LQ factorization.")
 
 (define-backend-implementation logm :lisp
   (lambda (matrix)
-    (multiple-value-bind (vals vects) (magicl:eig matrix)
+    (multiple-value-bind (vals vects) (eig matrix)
       (let ((new-log-diag
               (let ((log-vals (mapcar #'log vals)))
-                (magicl:from-diag log-vals))))
-        (magicl:@ vects
-                  new-log-diag
-                  (magicl:inv vects))))))
+                (from-diag log-vals))))
+        (@ vects
+           new-log-diag
+           (inv vects))))))
 
 (defmethod map!-lisp (function (tensor matrix))
   ;; XXX: If we ever have a "stride" or the like, this could be

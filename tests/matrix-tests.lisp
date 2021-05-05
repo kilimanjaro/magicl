@@ -217,75 +217,22 @@
             (is (every (lambda (a b) (< (abs (- a b)) 1d-8))
                        evals
                        (sort (mapcar #'realpart %evals) #'<)))
-            (is (magicl:= m (magicl:@ Q (magicl:from-diag %evals :type element-type) (magicl:dagger Q))))))))))
+            (is (magicl:= m (magicl:@ Q (magicl:from-diag %evals :type element-type) (magicl:dagger Q))
+                          1d-10)))))))) ; TODO: pick this systematically
 
-(deftest test-bidiagonal ()
-  "Test that we reduce an arbitrary matrix to bidiagonal form."
-  (let* ((u (magicl:random-unitary (list 5 5)))
-         (d (magicl:from-diag '(1d0 2d0 3d0 4d0 5d0)))
-         (v (magicl:random-unitary (list 5 5)))
-         (m (magicl:@ u d (magicl:dagger v))))
-    (multiple-value-bind (u b v) (magicl::bidiagonal m)
-      (is (magicl:= m (magicl:@ u b (magicl:dagger v)))))))
 
-(deftest test-svd ()
-  "Test the full and reduced SVDs."
-  (labels ((mul-diag-times-gen (diag matrix)
-             "Returns a newly allocated matrix resulting from the product of DIAG (a diagonal real matrix) with MATRIX (a complex matrix)."
-             #+ignore
-             (declare (type matrix diag matrix)
-                      (values matrix))
-             (let* ((m (magicl:nrows diag))
-                    (k (magicl:ncols matrix))
-                    (result (magicl:empty (list m k))))
-               (dotimes (i (min m (magicl:ncols diag)) result)
-                 (let ((dii (magicl:tref diag i i)))
-                   (dotimes (j k)
-                     (setf (magicl:tref result i j)
-                           (* dii (magicl:tref matrix i j))))))))
-
-           (norm-inf (matrix)
-             "Return the infinity norm of vec(MATRIX)."
-             (let ((data (magicl::storage matrix)))
-               (reduce #'max data :key #'abs)))
-
-           (zero-p (matrix &optional (tolerance (* 1.0d2 double-float-epsilon)))
-             "Return T if MATRIX is close to zero (within TOLERANCE)."
-             (< (norm-inf matrix) tolerance))
-
-           (check-full-svd (matrix)
-             "Validate full SVD of MATRIX."
-             (let ((m (magicl:nrows matrix))
-                   (n (magicl:ncols matrix)))
-               (multiple-value-bind (u sigma vh)
-                   (magicl:svd matrix)
-                 (is (= (magicl:nrows u) (magicl:ncols u) m))
-                 (is (and (= (magicl:nrows sigma) m) (= (magicl:ncols sigma) n)))
-                 (is (= (magicl:nrows vh) (magicl:ncols vh) n))
-                 (print 
-
-(deftest test-hermitian-eig ()
-  "Test that we can compute eigenvectors & values of Hermitian matrices."
-  (let ((matrix-size 5)
+(deftest test-unitary-extension ()
+  (let ((ncols 2)                       ; TODO: error on cols > rows
+        (nrows 5)
         (repetitions 5)
-        (eig-range 1d0)
         (element-types (list 'double-float '(complex double-float))))
     (dolist (element-type element-types)
       (dotimes (i repetitions)
-        (let* ((evals (sort (loop :for i :below matrix-size
-                                  :collect (random eig-range))
-                            #'<))
-               (D (magicl:from-diag evals :type element-type))
-               (Q (magicl:random-unitary (list matrix-size matrix-size) :type element-type))
-               (M (magicl:@ Q D (magicl:conjugate-transpose Q))))
-          (is (magicl:identity-matrix-p (magicl:@ Q (magicl:conjugate-transpose Q))))
-          (is (magicl:hermitian-matrix-p m))
-          (multiple-value-bind (%evals Q)
-              (magicl::hermitian-eig m)
-            (is (every (lambda (a b) (< (abs (- a b)) 1d-8))
-                       evals
-                       (sort (mapcar #'realpart %evals) #'<)))
-            (is (magicl:= m (magicl:@ Q (magicl:from-diag %evals :type element-type) (magicl:dagger Q))))))))))
+        (let* ((mat (magicl:slice (magicl:random-unitary (list nrows nrows) :type element-type)
+                                  (list 0 0) (list nrows ncols)))
+               (u (magicl::unitary-extension mat)))
+          (is (magicl:unitary-matrix-p u))
+          (is (magicl:= mat (magicl:slice u (list 0 0) (list nrows ncols)))))))))
 
 (deftest test-bidiagonal ()
   "Test that we reduce an arbitrary matrix to bidiagonal form."
@@ -317,7 +264,7 @@
              (let ((data (magicl::storage matrix)))
                (reduce #'max data :key #'abs)))
 
-           (zero-p (matrix &optional (tolerance (* 1.0d2 double-float-epsilon)))
+           (zero-p (matrix &optional (tolerance (* 1.0d3 double-float-epsilon)))
              "Return T if MATRIX is close to zero (within TOLERANCE)."
              (< (norm-inf matrix) tolerance))
 
@@ -352,6 +299,5 @@
       (check-reduced-svd tall-thin-matrix))
 
     (let ((short-fat-matrix (magicl:rand '(2 8))))
-;      (check-full-svd short-fat-matrix)
-;     (check-reduced-svd short-fat-matrix)
-      )))
+      (check-full-svd short-fat-matrix)
+      (check-reduced-svd short-fat-matrix))))

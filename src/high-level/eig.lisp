@@ -150,6 +150,11 @@ Only updates rows with index >= START-IDX."
                   (* scalar (tref matrix i idx)))
         :finally (return matrix)))
 
+(defun scale-row! (matrix idx scalar)
+  (loop :for j :below (ncols matrix)
+        :do (setf (tref matrix idx j)
+                  (* scalar (tref matrix idx j)))
+        :finally (return matrix)))
 
 ;;; QR
 
@@ -173,6 +178,12 @@ Only updates rows with index >= START-IDX."
       (setf R (slice R (list 0 0) (list p (ncols R)))))
     ;; TODO: fix this with the choice of householder coeffs
     ;; force positive values on the diagonal
+    (loop :for i :below (min (nrows R) (ncols R))
+          :for val := (tref R i i)
+          :unless (and (zerop (imagpart val))
+                       (not (minusp (realpart val))))
+            :do (scale-column! Q i (/ val (abs val)))
+                (scale-row! R i (/ (conjugate val) (abs val))))
     (values Q R)))
 
 (defmethod qr-lis ((matrix matrix))
@@ -304,30 +315,38 @@ Only updates rows with index >= START-IDX."
             :finally (push (tref H 0 0) eigs))
       (values eigs Q))))
 
-(defun svdstep! (A)
-  (let* ((m (nrows A))
-         (n (ncols A))
-         (shift (wilkinson-shift (tref A (- m 2) (- n 2))
-                                 (tref A (- m 2) (1- n))
-                                 (tref A (1- m) (1- n))))
-         (y (- (tref A 0 0) shift))
-         (z (tref A 0 1))
-         (gs nil))
-    (dotimes (k (1- n))
-      (multiple-value-bind (c s) (givens-entries y z)
-        (let ((g (make-givens-rotation :i k :j (1+ k) :c c :s s)))
-          (right-apply-givens! A g)
-          (push g gs)
-          (setf y (tref A k k)
-                z (tref A (1+ k) k)))
+(defun svdstep! (B)
+  (flet ((abs2 (x)
+           (* (conjugate x) x)))
+    (let* ((m (nrows B))
+           (n (ncols B))
+           (Bij (if (> m 2) (tref B (- m 3) (- n 2)) 0))
+           (Bjj (tref B (- m 2) (- n 2)))
+           (Bjk (tref B (- m 2) (1- n)))
+           (Bkk (tref B (1- n) (1- n)))
+           ;; we want to shift by the amount associated with the tridiagonal B^H B
+           ;; the following can be worked out by hand or found in 8.6 of Golub & van Loan
+           (shift (wilkinson-shift (+ (abs2 Bij) (abs2 Bjj))
+                                   (* Bjj Bjk)
+                                   (+ (abs2 Bjk) (abs2 Bkk))))
+           (y (- (tref B 0 0) shift))
+           (z (tref B 0 1))
+           (gs nil))
+      (dotimes (k (1- n))
         (multiple-value-bind (c s) (givens-entries y z)
           (let ((g (make-givens-rotation :i k :j (1+ k) :c c :s s)))
-            (left-apply-givens! A g)
+            (right-apply-givens! B g)
             (push g gs)
-            (when (< k (- n 2))
-              (setf y (tref A k (1+ k))
-                    z (tref A k (+ k 2))))))))
-    (nreverse gs)))
+            (setf y (tref B k k)
+                  z (tref B (1+ k) k)))
+          (multiple-value-bind (c s) (givens-entries y z)
+            (let ((g (make-givens-rotation :i k :j (1+ k) :c c :s s)))
+              (left-apply-givens! B g)
+              (push g gs)
+              (when (< k (- n 2))
+                (setf y (tref B k (1+ k))
+                      z (tref B k (+ k 2))))))))
+      (nreverse gs))))
 
 ;;; TODO: consistent use of M and N
 
@@ -344,17 +363,25 @@ Only updates rows with index >= START-IDX."
         q))))
 
 (defun svd-lisp (matrix &key reduced)
+  ;; short and fat => find svd of tranpose
+  (when (> (ncols matrix) (nrows matrix))
+    (multiple-value-bind (U D Vh) (svd-lisp (transpose matrix) :reduced reduced)
+      (return-from svd-lisp
+        (values (transpose! Vh :fast t)
+                (transpose! D :fast t)
+                (transpose! U :fast t)))))
   (multiple-value-bind (Q R) (%qr-lisp matrix)
     (let ((svals nil))
       (multiple-value-bind (U B V) (bidiagonal R)
         ;; TODO: realpart
+        (assert (cl:= (nrows b) (ncols b)))
         (loop :with i := (1- (nrows B))
               :until (zerop i)
               :do (loop :for (gv gu) :on (svdstep! B) :by #'cddr
                         :do (right-apply-givens! U gu)
                             (right-apply-givens! V gv))
               :when (<= (abs (tref B (1- i) i))
-                        (* *double-comparison-threshold* ; TODO
+                        (* 2 *double-comparison-threshold* ; TODO
                            (+ (abs (tref B (1- i) (1- i))) (abs (tref B i i)))))
                 :do (push (tref B i i) svals)
                     (setf B (slice B (list 0 0) (list i i)))
@@ -378,7 +405,6 @@ Only updates rows with index >= START-IDX."
                               (setf (tref Vt-sorted j new-idx)
                                     (tref V old-idx j)))
                         :collect (abs val))))
-            (print U-sorted)
             (if reduced
                 (values U-sorted
                         (from-diag svals-sorted :type (element-type matrix))
